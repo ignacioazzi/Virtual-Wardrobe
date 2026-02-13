@@ -4,425 +4,323 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Virtual Wardrobe</title>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-        sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
   </style>
 </head>
-<body>
-  <div id="root"></div>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen">
+  <div id="app"></div>
 
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-    const { Upload, Plus, X, Check, Loader, Download, UploadCloud, Edit2, Save, Trash2 } = lucide;
+  <script>
+    // State
+    let state = {
+      outfits: [],
+      view: 'gallery',
+      selectedOutfit: null,
+      currentImage: null,
+      currentItems: [{ name: '', type: 'other', color: '#3b82f6', owned: false }],
+      activeFilters: []
+    };
 
-    const ImageIcon = ({ className }) => (
-      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    );
+    // Load data
+    function loadData() {
+      const stored = localStorage.getItem('wardrobe-data');
+      if (stored) {
+        state.outfits = JSON.parse(stored).outfits || [];
+      }
+      render();
+    }
 
-    function VirtualWardrobe() {
-      const [wardrobeData, setWardrobeData] = useState({ outfits: [] });
-      const [loading, setLoading] = useState(true);
-      const [error, setError] = useState(null);
-      const [successMessage, setSuccessMessage] = useState(null);
-      const [isDragging, setIsDragging] = useState(false);
-      const [selectedOutfit, setSelectedOutfit] = useState(null);
-      const [processingImage, setProcessingImage] = useState(false);
-      const [bulkProcessing, setBulkProcessing] = useState(false);
-      const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
-      const [savingOutfit, setSavingOutfit] = useState(false);
-      const [activeFilters, setActiveFilters] = useState([]);
-      const [outfitImage, setOutfitImage] = useState(null);
-      const [detectedItems, setDetectedItems] = useState([]);
-      const [analyzingOutfit, setAnalyzingOutfit] = useState(false);
-      const [editingItemIndex, setEditingItemIndex] = useState(null);
-      const [editingDetailItem, setEditingDetailItem] = useState(null);
-      const [view, setView] = useState('gallery');
+    // Save data
+    function saveData() {
+      localStorage.setItem('wardrobe-data', JSON.stringify({ outfits: state.outfits }));
+    }
 
-      useEffect(() => { loadWardrobeData(); }, []);
-
-      useEffect(() => {
-        const preventDefaults = (e) => { e.preventDefault(); e.stopPropagation(); };
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-          document.body.addEventListener(eventName, preventDefaults);
-        });
-        return () => {
-          ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            document.body.removeEventListener(eventName, preventDefaults);
-          });
-        };
-      }, []);
-
-      const loadWardrobeData = async () => {
-        setLoading(true);
-        try {
-          const stored = localStorage.getItem('wardrobe-data');
-          if (stored) {
-            const data = JSON.parse(stored);
-            setWardrobeData(data.items && !data.outfits ? { outfits: [], lastUpdated: new Date().toISOString() } : data);
-          } else {
-            const initialData = { outfits: [], lastUpdated: new Date().toISOString() };
-            localStorage.setItem('wardrobe-data', JSON.stringify(initialData));
-            setWardrobeData(initialData);
-          }
-        } catch (err) {
-          setWardrobeData({ outfits: [], lastUpdated: new Date().toISOString() });
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      const saveWardrobeData = async (data) => {
-        localStorage.setItem('wardrobe-data', JSON.stringify({ ...data, lastUpdated: new Date().toISOString() }));
-      };
-
-      const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    // Convert file to base64
+    function fileToBase64(file) {
+      return new Promise((resolve) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
+        reader.onload = (e) => resolve(e.target.result);
         reader.readAsDataURL(file);
       });
+    }
 
-      const analyzeOutfitWithAI = async (imageBase64, mimeType) => {
-        try {
-          const base64Data = imageBase64.split(',')[1];
-          const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'x-api-key': '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',
-              'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
-              max_tokens: 2000,
-              messages: [{
-                role: 'user',
-                content: [
-                  { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } },
-                  { type: 'text', text: 'Analyze this outfit image and detect ALL individual clothing items visible. Return ONLY a JSON object with this exact format (no markdown, no backticks, no preamble):\n\n{"items":[{"name":"color + general item name","type":"one of: jacket, shirt, t-shirt, sweater, hoodie, pants, jeans, shorts, skirt, dress, shoes, sneakers, boots, hat, accessory, other","color":"#hexcode","inRealWardrobe":false}]}\n\nCRITICAL RULES:\n- Only return ONE dominant color per item as a hex code\n- Be conservative with colors - only use different colors if VERY obviously different\n- Use SIMPLE, GENERAL names: "Black jacket" NOT "Black bomber jacket"\n- Just color + general type (e.g., "White shirt", "Black shoes")\n- Detect every separate clothing item' }
-                ]
-              }]
-            })
-          });
-          const data = await apiResponse.json();
-          const textContent = data.content.find(c => c.type === 'text')?.text || '{"items":[]}';
-          const cleanedText = textContent.replace(/```json\n?|\n?```/g, '').trim();
-          return JSON.parse(cleanedText).items || [];
-        } catch (err) {
-          console.error('AI Error:', err);
-          return [{ name: 'New Item', type: 'other', color: '#808080', inRealWardrobe: false }];
-        }
-      };
+    // Show toast
+    function showToast(message) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-black text-white px-6 py-3 rounded-lg shadow-2xl z-50';
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
 
-      const handleDrop = async (e) => {
-        e.preventDefault(); e.stopPropagation(); setIsDragging(false);
-        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-        if (files.length > 0) files.length === 1 ? await processImage(files[0]) : await processBulkImages(files);
-      };
-
-      const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
-      const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
-      const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.target === e.currentTarget) setIsDragging(false); };
-
-      const handleFileSelect = async (e) => {
-        const files = Array.from(e.target.files);
-        if (files.length > 0) files.length === 1 ? await processImage(files[0]) : await processBulkImages(files);
-      };
-
-      const processImage = async (file) => {
-        setProcessingImage(true);
-        try {
-          const imageBase64 = await fileToBase64(file);
-          setOutfitImage(imageBase64);
-          setAnalyzingOutfit(true);
-          const items = await analyzeOutfitWithAI(imageBase64, file.type);
-          setAnalyzingOutfit(false);
-          setDetectedItems(items);
-          setView('add');
-        } catch (err) {
-          setError('Failed to process image');
-        } finally {
-          setProcessingImage(false);
-        }
-      };
-
-      const processBulkImages = async (files) => {
-        setBulkProcessing(true);
-        setBulkProgress({ current: 0, total: files.length });
-        const newOutfits = [];
-        for (let i = 0; i < files.length; i++) {
-          setBulkProgress({ current: i + 1, total: files.length });
-          try {
-            const imageBase64 = await fileToBase64(files[i]);
-            const items = await analyzeOutfitWithAI(imageBase64, files[i].type);
-            newOutfits.push({
-              id: `${Date.now()}-${i}`,
-              name: items.map(item => item.name).join(', '),
-              items: items,
-              imageUrl: imageBase64,
-              dateAdded: new Date().toISOString(),
-              inRealWardrobe: items.some(item => item.inRealWardrobe)
-            });
-          } catch (err) { }
-        }
-        if (newOutfits.length > 0) {
-          const updatedData = { outfits: [...wardrobeData.outfits, ...newOutfits] };
-          setWardrobeData(updatedData);
-          await saveWardrobeData(updatedData);
-          setSuccessMessage(`${newOutfits.length} outfit${newOutfits.length > 1 ? 's' : ''} added`);
-          setTimeout(() => setSuccessMessage(null), 3000);
-        }
-        setBulkProcessing(false);
-        setBulkProgress({ current: 0, total: 0 });
-      };
-
-      const updateDetectedItem = (index, field, value) => {
-        const updated = [...detectedItems];
-        updated[index] = { ...updated[index], [field]: value };
-        setDetectedItems(updated);
-      };
-
-      const removeDetectedItem = (index) => setDetectedItems(detectedItems.filter((_, i) => i !== index));
-      const generateOutfitName = () => detectedItems.map(item => item.name).join(', ');
-
-      const addOutfit = async () => {
-        if (detectedItems.length === 0) { setError('No items to add'); return; }
-        setSavingOutfit(true);
-        const newOutfit = {
-          id: Date.now().toString(),
-          name: generateOutfitName(),
-          items: detectedItems,
-          imageUrl: outfitImage,
-          dateAdded: new Date().toISOString(),
-          inRealWardrobe: detectedItems.some(item => item.inRealWardrobe)
-        };
-        const updatedData = { outfits: [...wardrobeData.outfits, newOutfit] };
-        try {
-          setWardrobeData(updatedData);
-          await saveWardrobeData(updatedData);
-          setOutfitImage(null); setDetectedItems([]); setView('gallery'); setError(null);
-          setSuccessMessage('Outfit added');
-          setTimeout(() => setSuccessMessage(null), 3000);
-        } catch (err) {
-          setError('Failed to add outfit');
-        } finally {
-          setSavingOutfit(false);
-        }
-      };
-
-      const updateOutfitItem = (itemIndex, field, value) => {
-        const updatedItems = [...selectedOutfit.items];
-        updatedItems[itemIndex] = { ...updatedItems[itemIndex], [field]: value };
-        setSelectedOutfit({
-          ...selectedOutfit,
-          items: updatedItems,
-          name: updatedItems.map(item => item.name).join(', '),
-          inRealWardrobe: updatedItems.some(item => item.inRealWardrobe)
-        });
-      };
-
-      const saveOutfitChanges = async () => {
-        setSavingOutfit(true);
-        try {
-          const updatedData = { outfits: wardrobeData.outfits.map(outfit => outfit.id === selectedOutfit.id ? selectedOutfit : outfit) };
-          setWardrobeData(updatedData);
-          await saveWardrobeData(updatedData);
-          setEditingDetailItem(null);
-          setSuccessMessage('Changes saved');
-          setTimeout(() => setSuccessMessage(null), 3000);
-        } catch (err) {
-          setError('Failed to save changes');
-        } finally {
-          setSavingOutfit(false);
-        }
-      };
-
-      const handleDeleteOutfit = async (outfitId, e) => {
-        if (e) e.stopPropagation();
-        const updatedData = { outfits: wardrobeData.outfits.filter(outfit => outfit.id !== outfitId) };
-        setWardrobeData(updatedData);
-        setSelectedOutfit(null);
-        setSuccessMessage('Outfit deleted');
-        setTimeout(() => setSuccessMessage(null), 3000);
-        try { await saveWardrobeData(updatedData); } catch (err) { }
-      };
-
-      const handleExport = () => {
-        const dataStr = JSON.stringify(wardrobeData, null, 2);
-        const dataBlob = new Blob([dataStr], { type: 'application/json' });
-        const url = URL.createObjectURL(dataBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `wardrobe-backup-${new Date().toISOString().split('T')[0]}.json`;
-        link.click();
-        URL.revokeObjectURL(url);
-        setSuccessMessage('Wardrobe exported');
-        setTimeout(() => setSuccessMessage(null), 3000);
-      };
-
-      const handleImport = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          try {
-            const importedData = JSON.parse(event.target.result);
-            setWardrobeData(importedData);
-            await saveWardrobeData(importedData);
-            setSuccessMessage('Wardrobe imported');
-            setTimeout(() => setSuccessMessage(null), 3000);
-          } catch (err) { setError('Failed to import data'); }
-        };
-        reader.readAsText(file);
-      };
-
-      const toggleFilter = (itemName, e) => {
-        e.stopPropagation();
-        setActiveFilters(activeFilters.includes(itemName) ? activeFilters.filter(f => f !== itemName) : [...activeFilters, itemName]);
-      };
-
-      const removeFilter = (itemName) => setActiveFilters(activeFilters.filter(f => f !== itemName));
-
-      const getFilteredOutfits = () => {
-        if (activeFilters.length === 0) return wardrobeData.outfits;
-        return wardrobeData.outfits.filter(outfit => activeFilters.every(filter => outfit.items.some(item => item.name === filter)));
-      };
-
-      const filteredOutfits = getFilteredOutfits();
-
-      if (loading) {
-        return (
-          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
-            <div className="text-center">
-              <Loader className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
-              <p className="text-gray-600">Loading your wardrobe...</p>
-            </div>
-          </div>
-        );
+    // Handle image upload
+    async function handleImageUpload(e) {
+      const file = e.target.files[0];
+      if (file) {
+        state.currentImage = await fileToBase64(file);
+        state.view = 'add';
+        render();
       }
+    }
 
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50" onDrop={view === 'gallery' ? handleDrop : undefined} onDragOver={view === 'gallery' ? handleDragOver : undefined} onDragEnter={view === 'gallery' ? handleDragEnter : undefined} onDragLeave={view === 'gallery' ? handleDragLeave : undefined}>
-          {(successMessage || error) && (
-            <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-[100]">
-              {successMessage && <div className="bg-black text-white px-6 py-3 rounded-lg shadow-2xl">{successMessage}</div>}
-              {error && <div className="bg-black text-white px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3"><span>{error}</span><button onClick={() => setError(null)}><X className="w-4 h-4" /></button></div>}
-            </div>
-          )}
+    // Add outfit
+    function addOutfit() {
+      const validItems = state.currentItems.filter(i => i.name.trim());
+      if (!validItems.length) return showToast('Add at least one item name');
+      if (!state.currentImage) return showToast('Add an image');
 
-          {(processingImage || savingOutfit) && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-2xl shadow-2xl p-12 text-center">
-                <Loader className="w-16 h-16 animate-spin text-blue-600 mx-auto mb-4" />
-                <p className="text-xl font-semibold text-gray-800 mb-2">{processingImage && 'Processing image...'}{savingOutfit && 'Saving...'}</p>
-                {processingImage && <p className="text-sm text-gray-600">AI is analyzing your outfit</p>}
-              </div>
-            </div>
-          )}
+      const outfit = {
+        id: Date.now().toString(),
+        name: validItems.map(i => i.name).join(', '),
+        items: validItems,
+        imageUrl: state.currentImage,
+        dateAdded: new Date().toISOString()
+      };
 
-          {bulkProcessing && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-2xl shadow-2xl p-12 text-center max-w-md w-full mx-4">
-                <Loader className="w-16 h-16 animate-spin text-blue-600 mx-auto mb-4" />
-                <p className="text-xl font-semibold text-gray-800 mb-2">Processing outfits...</p>
-                <p className="text-sm text-gray-600 mb-4">{bulkProgress.current} of {bulkProgress.total} images</p>
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div className="bg-blue-600 h-3 rounded-full transition-all duration-300" style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }} />
-                </div>
-              </div>
-            </div>
-          )}
+      state.outfits.push(outfit);
+      saveData();
+      state.view = 'gallery';
+      state.currentImage = null;
+      state.currentItems = [{ name: '', type: 'other', color: '#3b82f6', owned: false }];
+      showToast('Outfit added');
+      render();
+    }
 
-          {isDragging && view === 'gallery' && (
-            <div className="fixed inset-0 bg-blue-500 bg-opacity-20 flex items-center justify-center z-50 pointer-events-none">
-              <div className="bg-white rounded-2xl shadow-2xl p-12 border-4 border-blue-500 border-dashed">
-                <Upload className="w-20 h-20 text-blue-600 mx-auto mb-4" />
-                <p className="text-2xl font-bold text-gray-800">Drop outfit images here</p>
-                <p className="text-sm text-gray-600 mt-2">Multiple images supported</p>
-              </div>
-            </div>
-          )}
+    // Delete outfit
+    function deleteOutfit(id) {
+      state.outfits = state.outfits.filter(o => o.id !== id);
+      state.selectedOutfit = null;
+      saveData();
+      showToast('Outfit deleted');
+      render();
+    }
 
-          <header className="bg-white shadow-sm">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center"><ImageIcon className="w-6 h-6 text-white" /></div>
-                  <h1 className="text-2xl font-bold text-gray-800">Virtual Wardrobe</h1>
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button onClick={handleExport} className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"><Download className="w-4 h-4" />Export</button>
-                  <label className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"><UploadCloud className="w-4 h-4" />Import<input type="file" accept=".json" onChange={handleImport} className="hidden" /></label>
-                  <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer"><Plus className="w-5 h-5" />Upload<input type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" /></label>
-                </div>
-              </div>
-            </div>
-          </header>
+    // Toggle filter
+    function toggleFilter(itemName) {
+      const index = state.activeFilters.indexOf(itemName);
+      if (index > -1) {
+        state.activeFilters.splice(index, 1);
+      } else {
+        state.activeFilters.push(itemName);
+      }
+      render();
+    }
 
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            {wardrobeData.outfits.length === 0 ? (
-              <div className="text-center py-20 bg-white rounded-2xl shadow-lg border-2 border-dashed border-gray-300">
-                <ImageIcon className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-700 mb-2">No outfits yet</h3>
-                <p className="text-gray-500 mb-2">Drag and drop outfit images or click to upload</p>
-                <p className="text-sm text-gray-400 mb-6">Tip: Select multiple images for bulk upload</p>
-                <label className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer"><Plus className="w-5 h-5" />Upload<input type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" /></label>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h2 className="text-2xl font-bold text-gray-800">{filteredOutfits.length} {filteredOutfits.length === 1 ? 'outfit' : 'outfits'}{activeFilters.length > 0 && ' with'}</h2>
-                    {activeFilters.map((filter) => (
-                      <div key={filter} className="flex items-center gap-2 bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm font-medium">
-                        <span>{filter}</span>
-                        <button onClick={() => removeFilter(filter)} className="hover:bg-blue-200 rounded-full p-0.5 transition-colors"><X className="w-3.5 h-3.5" /></button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid grid-cols-4 lg:grid-cols-4 gap-4">
-                  {filteredOutfits.map((outfit) => (
-                    <div key={outfit.id} className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow cursor-pointer" onClick={() => setSelectedOutfit(outfit)}>
-                      <div className="relative aspect-[3/4] bg-gray-100 group">
-                        <img src={outfit.imageUrl} alt={outfit.name} className="w-full h-full object-cover" />
-                        <button onClick={(e) => handleDeleteOutfit(outfit.id, e)} className="absolute top-2 right-2 z-10 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                      <div className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex flex-wrap gap-2">
-                          {outfit.items.map((item, idx) => (
-                            <button key={idx} onClick={(e) => toggleFilter(item.name, e)} className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg transition-colors ${activeFilters.includes(item.name) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                              <div className="w-3 h-3 rounded-full border border-white shadow-sm flex-shrink-0" style={{ backgroundColor: item.color }} />
-                              <span>{item.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </main>
-        </div>
+    // Get filtered outfits
+    function getFilteredOutfits() {
+      if (!state.activeFilters.length) return state.outfits;
+      return state.outfits.filter(outfit => 
+        state.activeFilters.every(filter => 
+          outfit.items.some(item => item.name === filter)
+        )
       );
     }
 
-    ReactDOM.render(<VirtualWardrobe />, document.getElementById('root'));
+    // Export data
+    function exportData() {
+      const dataStr = JSON.stringify({ outfits: state.outfits }, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wardrobe-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Exported');
+    }
+
+    // Import data
+    function importData(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          state.outfits = data.outfits || [];
+          saveData();
+          showToast('Imported');
+          render();
+        } catch (err) {
+          showToast('Import failed');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Render
+    function render() {
+      const app = document.getElementById('app');
+      const filteredOutfits = getFilteredOutfits();
+
+      app.innerHTML = `
+        <!-- Header -->
+        <header class="bg-white shadow-sm">
+          <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h1 class="text-2xl font-bold text-gray-800">Virtual Wardrobe</h1>
+            </div>
+            <div class="flex gap-3">
+              <button onclick="exportData()" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Export</button>
+              <label class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
+                Import
+                <input type="file" accept=".json" onchange="importData(event)" class="hidden">
+              </label>
+              <label class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
+                Upload
+                <input type="file" accept="image/*" onchange="handleImageUpload(event)" class="hidden">
+              </label>
+            </div>
+          </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto px-4 py-8">
+          ${state.view === 'add' ? renderAddView() : renderGalleryView(filteredOutfits)}
+        </main>
+
+        <!-- Modals -->
+        ${state.selectedOutfit ? renderDetailModal() : ''}
+      `;
+    }
+
+    function renderGalleryView(outfits) {
+      if (!outfits.length) {
+        return `
+          <div class="text-center py-20 bg-white rounded-2xl shadow-lg border-2 border-dashed border-gray-300">
+            <svg class="w-20 h-20 text-gray-300 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <h3 class="text-xl font-semibold text-gray-700 mb-2">No outfits yet</h3>
+            <p class="text-gray-500 mb-6">Click Upload to add your first outfit</p>
+            <label class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
+              Upload
+              <input type="file" accept="image/*" onchange="handleImageUpload(event)" class="hidden">
+            </label>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="mb-6 flex items-center gap-3 flex-wrap">
+          <h2 class="text-2xl font-bold text-gray-800">${outfits.length} ${outfits.length === 1 ? 'outfit' : 'outfits'}${state.activeFilters.length ? ' with' : ''}</h2>
+          ${state.activeFilters.map(filter => `
+            <div class="flex items-center gap-2 bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm font-medium">
+              <span>${filter}</span>
+              <button onclick="toggleFilter('${filter.replace(/'/g, "\\'")}')">×</button>
+            </div>
+          `).join('')}
+        </div>
+        <div class="grid grid-cols-4 gap-4">
+          ${outfits.map(outfit => `
+            <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow cursor-pointer" onclick="state.selectedOutfit = ${JSON.stringify(outfit).replace(/"/g, '&quot;')}; render();">
+              <div class="relative aspect-[3/4] bg-gray-100 group">
+                <img src="${outfit.imageUrl}" alt="${outfit.name}" class="w-full h-full object-cover">
+                <button onclick="event.stopPropagation(); deleteOutfit('${outfit.id}')" class="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+              </div>
+              <div class="p-3" onclick="event.stopPropagation()">
+                <div class="flex flex-wrap gap-2">
+                  ${outfit.items.map(item => `
+                    <button onclick="toggleFilter('${item.name.replace(/'/g, "\\'")}'); event.stopPropagation();" class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg ${state.activeFilters.includes(item.name) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}">
+                      <div class="w-3 h-3 rounded-full border border-white shadow-sm" style="background-color: ${item.color}"></div>
+                      <span>${item.name}</span>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderAddView() {
+      return `
+        <div class="bg-white rounded-2xl shadow-lg max-w-6xl mx-auto overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2">
+            <div class="bg-gray-100 flex items-center justify-center p-8">
+              <img src="${state.currentImage}" class="max-w-full max-h-96 object-contain">
+            </div>
+            <div class="p-8">
+              <h2 class="text-2xl font-bold mb-6">Add Items</h2>
+              <div class="space-y-4 mb-6" id="items-container">
+                ${state.currentItems.map((item, i) => `
+                  <div class="border rounded-lg p-4">
+                    <div class="flex gap-3 mb-3">
+                      <input type="color" value="${item.color}" onchange="state.currentItems[${i}].color = this.value" class="w-12 h-12 rounded cursor-pointer">
+                      <input type="text" value="${item.name}" oninput="state.currentItems[${i}].name = this.value" placeholder="e.g., Black jacket" class="flex-1 px-3 py-2 border rounded-lg">
+                      ${state.currentItems.length > 1 ? `<button onclick="state.currentItems.splice(${i}, 1); render();" class="text-red-600 px-2">×</button>` : ''}
+                    </div>
+                    <select onchange="state.currentItems[${i}].type = this.value" class="w-full px-3 py-2 border rounded-lg mb-3">
+                      <option value="other">Other</option>
+                      <option value="jacket">Jacket</option>
+                      <option value="shirt">Shirt</option>
+                      <option value="t-shirt">T-Shirt</option>
+                      <option value="pants">Pants</option>
+                      <option value="jeans">Jeans</option>
+                      <option value="shoes">Shoes</option>
+                      <option value="dress">Dress</option>
+                    </select>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" ${item.owned ? 'checked' : ''} onchange="state.currentItems[${i}].owned = this.checked" class="w-4 h-4">
+                      I own this item
+                    </label>
+                  </div>
+                `).join('')}
+              </div>
+              <button onclick="state.currentItems.push({ name: '', type: 'other', color: '#3b82f6', owned: false }); render();" class="w-full mb-6 px-4 py-2 border-2 border-dashed rounded-lg hover:border-blue-500">+ Add Item</button>
+              <div class="flex gap-3">
+                <button onclick="state.view = 'gallery'; state.currentImage = null; state.currentItems = [{ name: '', type: 'other', color: '#3b82f6', owned: false }]; render();" class="flex-1 px-6 py-3 border rounded-lg">Cancel</button>
+                <button onclick="addOutfit()" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold">Add Outfit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDetailModal() {
+      return `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="if (event.target === this) { state.selectedOutfit = null; render(); }">
+          <div class="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-auto">
+            <div class="grid grid-cols-1 md:grid-cols-2">
+              <div class="bg-gray-100 p-8 flex items-center justify-center">
+                <img src="${state.selectedOutfit.imageUrl}" class="max-w-full max-h-96 object-contain rounded-lg">
+              </div>
+              <div class="p-8">
+                <div class="flex justify-between mb-6">
+                  <h2 class="text-2xl font-bold">${state.selectedOutfit.name}</h2>
+                  <button onclick="state.selectedOutfit = null; render();" class="text-gray-400">×</button>
+                </div>
+                <div class="space-y-4 mb-8">
+                  ${state.selectedOutfit.items.map(item => `
+                    <div class="border rounded-lg p-4">
+                      <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full border-2" style="background-color: ${item.color}"></div>
+                        <h4 class="font-semibold">${item.name}</h4>
+                        ${item.owned ? '<span class="ml-auto bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs">Owned</span>' : ''}
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+                <button onclick="deleteOutfit('${state.selectedOutfit.id}')" class="w-full px-6 py-3 bg-red-600 text-white rounded-lg font-semibold">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Initialize
+    loadData();
   </script>
 </body>
 </html>
