@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Wardrobe - AI Powered</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen">
+  <div id="app"></div>
+
+  <script type="module">
+    // ⚠️ REPLACE WITH YOUR GEMINI API KEY
+    // Get free key from: https://aistudio.google.com/apikey
+    const GEMINI_API_KEY = 'AIzaSyCrVXkTUPvb3Uwazmt6V87W20fcPnabDVQ';
+    
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    // State
+    let state = {
+      outfits: [],
+      view: 'gallery',
+      selectedOutfit: null,
+      currentImage: null,
+      detectedItems: [],
+      activeFilters: [],
+      processing: false,
+      analyzing: false,
+      editingItem: null
+    };
+
+    // Load data
+    function loadData() {
+      const stored = localStorage.getItem('wardrobe-data');
+      if (stored) {
+        state.outfits = JSON.parse(stored).outfits || [];
+      }
+      render();
+    }
+
+    // Save data
+    function saveData() {
+      localStorage.setItem('wardrobe-data', JSON.stringify({ outfits: state.outfits }));
+    }
+
+    // Convert file to base64
+    function fileToBase64(file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          // Remove data:image/jpeg;base64, prefix
+          const base64 = e.target.result.split(',')[1];
+          resolve(base64);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Analyze outfit with Gemini AI
+    async function analyzeOutfitWithAI(imageBase64) {
+      state.analyzing = true;
+      render();
+
+      try {
+        const response = await fetch(GEMINI_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  text: `Analyze this outfit image and detect ALL individual clothing items visible. Return ONLY a valid JSON object (no markdown, no backticks, no explanation) with this exact format:
+
+{"items":[{"name":"color + item type","type":"jacket|shirt|t-shirt|sweater|hoodie|pants|jeans|shorts|skirt|dress|shoes|sneakers|boots|hat|accessory|other","color":"#hexcode","inRealWardrobe":false}]}
+
+CRITICAL RULES:
+- Return ONE dominant color per item as hex code
+- Use SIMPLE names: "Black jacket" NOT "Black leather bomber jacket"
+- Format: "Color + Type" (e.g., "White shirt", "Blue jeans", "Black shoes")
+- Detect EVERY separate item (top, bottom, shoes, accessories)
+- Return ONLY the JSON object, nothing else`
+                },
+                {
+                  inline_data: {
+                    mime_type: "image/jpeg",
+                    data: imageBase64
+                  }
+                }
+              ]
+            }]
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          let textResponse = data.candidates[0].content.parts[0].text;
+          
+          // Clean up the response - remove markdown code blocks if present
+          textResponse = textResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          
+          try {
+            const parsed = JSON.parse(textResponse);
+            state.detectedItems = parsed.items || [];
+          } catch (parseError) {
+            console.error('Parse error:', parseError, 'Response:', textResponse);
+            // Fallback to manual entry
+            state.detectedItems = [{ name: '', type: 'other', color: '#3b82f6', inRealWardrobe: false }];
+            showToast('AI detection failed - please add items manually');
+          }
+        } else {
+          // Fallback to manual entry
+          state.detectedItems = [{ name: '', type: 'other', color: '#3b82f6', inRealWardrobe: false }];
+          showToast('AI detection unavailable - please add items manually');
+        }
+      } catch (error) {
+        console.error('AI Error:', error);
+        state.detectedItems = [{ name: '', type: 'other', color: '#3b82f6', inRealWardrobe: false }];
+        showToast('AI detection failed - please add items manually');
+      } finally {
+        state.analyzing = false;
+        render();
+      }
+    }
+
+    // Show toast
+    function showToast(message) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-black text-white px-6 py-3 rounded-lg shadow-2xl z-50';
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
+    // Handle image upload
+    async function handleImageUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      state.processing = true;
+      render();
+
+      try {
+        // Convert to base64 for display
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          state.currentImage = event.target.result;
+          
+          // Get base64 for AI
+          const base64 = await fileToBase64(file);
+          await analyzeOutfitWithAI(base64);
+          
+          state.view = 'add';
+          state.processing = false;
+          render();
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        showToast('Failed to process image');
+        state.processing = false;
+        render();
+      }
+    }
+
+    // Update detected item
+    function updateItem(index, field, value) {
+      state.detectedItems[index][field] = value;
+      render();
+    }
+
+    // Remove item
+    function removeItem(index) {
+      if (state.detectedItems.length > 1) {
+        state.detectedItems.splice(index, 1);
+        render();
+      }
+    }
+
+    // Add new item
+    function addNewItem() {
+      state.detectedItems.push({ name: '', type: 'other', color: '#3b82f6', inRealWardrobe: false });
+      render();
+    }
+
+    // Add outfit
+    function addOutfit() {
+      const validItems = state.detectedItems.filter(i => i.name.trim());
+      if (!validItems.length) return showToast('Add at least one item name');
+      if (!state.currentImage) return showToast('Add an image');
+
+      const outfit = {
+        id: Date.now().toString(),
+        name: validItems.map(i => i.name).join(', '),
+        items: validItems,
+        imageUrl: state.currentImage,
+        dateAdded: new Date().toISOString()
+      };
+
+      state.outfits.push(outfit);
+      saveData();
+      state.view = 'gallery';
+      state.currentImage = null;
+      state.detectedItems = [];
+      showToast('Outfit added');
+      render();
+    }
+
+    // Delete outfit
+    function deleteOutfit(id, e) {
+      if (e) e.stopPropagation();
+      state.outfits = state.outfits.filter(o => o.id !== id);
+      state.selectedOutfit = null;
+      saveData();
+      showToast('Outfit deleted');
+      render();
+    }
+
+    // Toggle filter
+    function toggleFilter(itemName, e) {
+      if (e) e.stopPropagation();
+      const index = state.activeFilters.indexOf(itemName);
+      if (index > -1) {
+        state.activeFilters.splice(index, 1);
+      } else {
+        state.activeFilters.push(itemName);
+      }
+      render();
+    }
+
+    // Get filtered outfits
+    function getFilteredOutfits() {
+      if (!state.activeFilters.length) return state.outfits;
+      return state.outfits.filter(outfit => 
+        state.activeFilters.every(filter => 
+          outfit.items.some(item => item.name === filter)
+        )
+      );
+    }
+
+    // Export data
+    function exportData() {
+      const dataStr = JSON.stringify({ outfits: state.outfits }, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wardrobe-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Exported');
+    }
+
+    // Import data
+    function importData(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          state.outfits = data.outfits || [];
+          saveData();
+          showToast('Imported');
+          render();
+        } catch (err) {
+          showToast('Import failed');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Render
+    function render() {
+      const app = document.getElementById('app');
+      const filteredOutfits = getFilteredOutfits();
+
+      app.innerHTML = `
+        ${state.processing ? `
+          <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-2xl shadow-2xl p-12 text-center">
+              <div class="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p class="text-xl font-semibold text-gray-800 mb-2">Processing image...</p>
+              ${state.analyzing ? '<p class="text-sm text-gray-600">AI is analyzing your outfit</p>' : ''}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Header -->
+        <header class="bg-white shadow-sm">
+          <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h1 class="text-2xl font-bold text-gray-800">Virtual Wardrobe</h1>
+              <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-semibold">AI Powered</span>
+            </div>
+            <div class="flex gap-3">
+              <button onclick="exportData()" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Export</button>
+              <label class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
+                Import
+                <input type="file" accept=".json" onchange="importData(event)" class="hidden">
+              </label>
+              <label class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
+                Upload
+                <input type="file" accept="image/*" onchange="handleImageUpload(event)" class="hidden">
+              </label>
+            </div>
+          </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto px-4 py-8">
+          ${state.view === 'add' ? renderAddView() : renderGalleryView(filteredOutfits)}
+        </main>
+
+        <!-- Modals -->
+        ${state.selectedOutfit ? renderDetailModal() : ''}
+      `;
+    }
+
+    function renderGalleryView(outfits) {
+      if (!outfits.length) {
+        return `
+          <div class="text-center py-20 bg-white rounded-2xl shadow-lg border-2 border-dashed border-gray-300">
+            <svg class="w-20 h-20 text-gray-300 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <h3 class="text-xl font-semibold text-gray-700 mb-2">No outfits yet</h3>
+            <p class="text-gray-500 mb-2">Upload an outfit image</p>
+            <p class="text-sm text-gray-400 mb-6">AI will automatically detect items, colors, and types ✨</p>
+            <label class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
+              Upload
+              <input type="file" accept="image/*" onchange="handleImageUpload(event)" class="hidden">
+            </label>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="mb-6 flex items-center gap-3 flex-wrap">
+          <h2 class="text-2xl font-bold text-gray-800">${outfits.length} ${outfits.length === 1 ? 'outfit' : 'outfits'}${state.activeFilters.length ? ' with' : ''}</h2>
+          ${state.activeFilters.map(filter => `
+            <div class="flex items-center gap-2 bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm font-medium">
+              <span>${filter}</span>
+              <button onclick="toggleFilter('${filter.replace(/'/g, "\\'")}')">×</button>
+            </div>
+          `).join('')}
+        </div>
+        <div class="grid grid-cols-4 gap-4">
+          ${outfits.map(outfit => `
+            <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow cursor-pointer" onclick="state.selectedOutfit = ${JSON.stringify(outfit).replace(/"/g, '&quot;')}; render();">
+              <div class="relative aspect-[3/4] bg-gray-100 group">
+                <img src="${outfit.imageUrl}" alt="${outfit.name}" class="w-full h-full object-cover">
+                <button onclick="deleteOutfit('${outfit.id}', event)" class="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+              <div class="p-3" onclick="event.stopPropagation()">
+                <div class="flex flex-wrap gap-2">
+                  ${outfit.items.map(item => `
+                    <button onclick="toggleFilter('${item.name.replace(/'/g, "\\'")}', event)" class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg ${state.activeFilters.includes(item.name) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}">
+                      <div class="w-3 h-3 rounded-full border border-white shadow-sm" style="background-color: ${item.color}"></div>
+                      <span>${item.name}</span>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderAddView() {
+      return `
+        <div class="bg-white rounded-2xl shadow-lg max-w-6xl mx-auto overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2">
+            <div class="bg-gray-100 flex items-center justify-center">
+              <img src="${state.currentImage}" class="w-full h-full object-contain">
+            </div>
+            <div class="p-8">
+              <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">AI Detected Items</h2>
+                ${state.analyzing ? '<div class="flex items-center gap-2 text-sm text-blue-600"><div class="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>Analyzing...</div>' : ''}
+              </div>
+              <div class="space-y-4 mb-6">
+                ${state.detectedItems.map((item, i) => `
+                  <div class="border rounded-lg p-4">
+                    <div class="flex gap-3 mb-3">
+                      <input type="color" value="${item.color}" onchange="updateItem(${i}, 'color', this.value)" class="w-12 h-12 rounded cursor-pointer">
+                      <input type="text" value="${item.name}" oninput="updateItem(${i}, 'name', this.value)" placeholder="e.g., Black jacket" class="flex-1 px-3 py-2 border rounded-lg">
+                      ${state.detectedItems.length > 1 ? `<button onclick="removeItem(${i})" class="text-red-600 px-2">×</button>` : ''}
+                    </div>
+                    <select onchange="updateItem(${i}, 'type', this.value)" class="w-full px-3 py-2 border rounded-lg mb-3">
+                      <option value="other" ${item.type === 'other' ? 'selected' : ''}>Other</option>
+                      <option value="jacket" ${item.type === 'jacket' ? 'selected' : ''}>Jacket</option>
+                      <option value="shirt" ${item.type === 'shirt' ? 'selected' : ''}>Shirt</option>
+                      <option value="t-shirt" ${item.type === 't-shirt' ? 'selected' : ''}>T-Shirt</option>
+                      <option value="sweater" ${item.type === 'sweater' ? 'selected' : ''}>Sweater</option>
+                      <option value="hoodie" ${item.type === 'hoodie' ? 'selected' : ''}>Hoodie</option>
+                      <option value="pants" ${item.type === 'pants' ? 'selected' : ''}>Pants</option>
+                      <option value="jeans" ${item.type === 'jeans' ? 'selected' : ''}>Jeans</option>
+                      <option value="shorts" ${item.type === 'shorts' ? 'selected' : ''}>Shorts</option>
+                      <option value="skirt" ${item.type === 'skirt' ? 'selected' : ''}>Skirt</option>
+                      <option value="dress" ${item.type === 'dress' ? 'selected' : ''}>Dress</option>
+                      <option value="shoes" ${item.type === 'shoes' ? 'selected' : ''}>Shoes</option>
+                      <option value="sneakers" ${item.type === 'sneakers' ? 'selected' : ''}>Sneakers</option>
+                      <option value="boots" ${item.type === 'boots' ? 'selected' : ''}>Boots</option>
+                      <option value="hat" ${item.type === 'hat' ? 'selected' : ''}>Hat</option>
+                      <option value="accessory" ${item.type === 'accessory' ? 'selected' : ''}>Accessory</option>
+                    </select>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" ${item.inRealWardrobe ? 'checked' : ''} onchange="updateItem(${i}, 'inRealWardrobe', this.checked)" class="w-4 h-4">
+                      I own this item
+                    </label>
+                  </div>
+                `).join('')}
+              </div>
+              <button onclick="addNewItem()" class="w-full mb-6 px-4 py-2 border-2 border-dashed rounded-lg hover:border-blue-500 text-gray-600">+ Add Item</button>
+              <div class="flex gap-3">
+                <button onclick="state.view = 'gallery'; state.currentImage = null; state.detectedItems = []; render();" class="flex-1 px-6 py-3 border rounded-lg">Cancel</button>
+                <button onclick="addOutfit()" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold">Add Outfit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDetailModal() {
+      return `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="if (event.target === this) { state.selectedOutfit = null; render(); }">
+          <div class="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-auto">
+            <div class="grid grid-cols-1 md:grid-cols-2">
+              <div class="bg-gray-100 p-8 flex items-center justify-center">
+                <img src="${state.selectedOutfit.imageUrl}" class="max-w-full max-h-96 object-contain rounded-lg">
+              </div>
+              <div class="p-8">
+                <div class="flex justify-between mb-6">
+                  <h2 class="text-2xl font-bold">${state.selectedOutfit.name}</h2>
+                  <button onclick="state.selectedOutfit = null; render();" class="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+                </div>
+                <div class="space-y-4 mb-8">
+                  ${state.selectedOutfit.items.map(item => `
+                    <div class="border rounded-lg p-4">
+                      <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full border-2 border-gray-300" style="background-color: ${item.color}"></div>
+                        <h4 class="font-semibold flex-1">${item.name}</h4>
+                        ${item.inRealWardrobe ? '<span class="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-semibold">Owned</span>' : ''}
+                      </div>
+                      <p class="text-sm text-gray-500 mt-2 capitalize">${item.type}</p>
+                    </div>
+                  `).join('')}
+                </div>
+                <button onclick="deleteOutfit('${state.selectedOutfit.id}')" class="w-full px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700">Delete Outfit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Make functions global
+    window.handleImageUpload = handleImageUpload;
+    window.updateItem = updateItem;
+    window.removeItem = removeItem;
+    window.addNewItem = addNewItem;
+    window.addOutfit = addOutfit;
+    window.deleteOutfit = deleteOutfit;
+    window.toggleFilter = toggleFilter;
+    window.exportData = exportData;
+    window.importData = importData;
+
+    // Initialize
+    loadData();
+  </script>
+</body>
+</html>
