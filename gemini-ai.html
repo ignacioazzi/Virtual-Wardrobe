@@ -18,7 +18,7 @@
     // Get free key from: https://aistudio.google.com/apikey
     const GEMINI_API_KEY = 'AIzaSyCrVXkTUPvb3Uwazmt6V87W20fcPnabDVQ';
     
-    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     // State
     let state = {
@@ -352,7 +352,7 @@ e        <div class="mb-6 flex items-center gap-3 flex-wrap">
             </div>
           `).join('')}
         </div>
-        <div class="grid grid-cols-2 md:grid-cols-43 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
           ${outfits.map(outfit => `
             <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow cursor-pointer" onclick="state.selectedOutfit = ${JSON.stringify(outfit).replace(/"/g, '&quot;')}; render();">
               <div class="relative aspect-[3/4] bg-gray-100 group">
